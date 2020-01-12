@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -16,7 +17,7 @@ import (
 	"github.com/urfave/cli"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -78,6 +79,20 @@ func DoStats(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+
+	secs := utils.ReadFromEnv("NODE_STAT_CHECK_INTERVAL_SECS", "5")
+	isecs, err := strconv.ParseInt(secs, 10, 64)
+	if err != nil {
+		isecs = 5
+	}
+
+	mURL := utils.ReadFromEnv("MONITORING_AGENT_URL", "http://localhost:8080/api/stats")
+	mAuthKey := utils.ReadFromEnv("MONITORING_AGENT_AUTH_KEY", "")
+	mDataFormat := utils.ReadFromEnv("MONITORING_AGENT_DATA_FORMAT", "")
+	mHookEnabled := utils.ReadFromEnv("MONITORING_AGENT_HOOK_ENABLED", "false")
+	hookEnabled := strings.ToLower(mHookEnabled) == "true" || mHookEnabled == "1"
+	mNodeID := utils.ReadFromEnv("MONITORING_NODE_ID", "")
+
 	for {
 		for _, pod := range podList.Items {
 			if done {
@@ -101,9 +116,15 @@ func DoStats(ctx *cli.Context) error {
 					logrus.Warnf("error executing command on pod [%s/%s] on [%s]: %v", pod.Namespace, pod.Name, pod.Spec.NodeName, err)
 				}
 			}
+
+			if hookEnabled {
+				utils.PostToMonitoringAgent(mURL, mAuthKey, mDataFormat, mNodeID, buf.String())
+			}
+
 			fmt.Printf("%s\n\n", buf.String())
 		}
-		time.Sleep(5 * time.Second)
+
+		time.Sleep(time.Duration(isecs) * time.Second)
 		if done {
 			return deleteStatsCollectors(client)
 		}

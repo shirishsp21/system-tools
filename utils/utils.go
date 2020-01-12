@@ -3,14 +3,17 @@ package utils
 import (
 	"archive/tar"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
 	"io/ioutil"
+	"net/http"
+	"os"
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/kubernetes"
@@ -26,6 +29,47 @@ import (
 const (
 	RKECluster = "RKE"
 )
+
+func ReadFromEnv(name string, defaultVal string) string {
+	v := os.Getenv(name)
+	if v == "" {
+		v = defaultVal
+	}
+
+	return v
+}
+
+func PostToMonitoringAgent(url string, authKey string, dataFormat string, nodeID string, data string) (string, error) {
+	fmt.Printf("Posting to monitoring agent : url - %s, nodeID - %s, data -> %s", url, nodeID, data)
+	d := map[string]string{}
+	d["nodeId"] = nodeID
+	d["data"] = data
+	d["dataFormat"] = dataFormat
+	bBody, err := json.Marshal(d)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(bBody))
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("Authorization", fmt.Sprintf("Basic: %s", authKey))
+
+	c := &http.Client{}
+	resp, err := c.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	fmt.Println("Successfully posted data to monitoring agent.")
+
+	b, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return string(b), nil
+}
 
 func RetryTo(f func() error) error {
 	timeout := time.After(time.Second * 60)
